@@ -1,0 +1,13 @@
+services:
+  chessvision:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount model directly when running locally — skips the Google Drive download
+      - ./my_chess_model.v2.keras:/app/my_chess_model.v2.keras
+    environment:
+      - MODEL_PATH=/app/my_chess_model.v2.keras
+      - STOCKFISH_PATH=/usr/games/stockfish
+      - SEARCH_DEPTH=5
+      # GDRIVE_FILE_ID not needed locally since we mount the file directly

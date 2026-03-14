@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>ChessVision — AI Move Advisor</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;900&family=Crimson+Pro:ital,wght@0,300;0,400;1,300&display=swap" rel="stylesheet"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --ink:       #0a0a0b;
+      --board-dark:  #1a1410;
+      --board-mid:   #221c16;
+      --surface:     #16120e;
+      --panel:       #1e1812;
+      --border:      #3a2e22;
+      --gold:        #c9a84c;
+      --gold-dim:    #7a6330;
+      --gold-bright: #f0cc6e;
+      --ivory:       #e8dcc8;
+      --ivory-dim:   #9a8e7a;
+      --red:         #c0392b;
+      --green:       #27ae60;
+      --white-piece: #f5efe4;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--ink);
+      color: var(--ivory);
+      font-family: 'Crimson Pro', Georgia, serif;
+      font-size: 17px;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── Chessboard background texture ── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        repeating-conic-gradient(var(--board-dark) 0% 25%, var(--board-mid) 0% 50%);
+      background-size: 64px 64px;
+      opacity: 0.18;
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    /* ── Vignette overlay ── */
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: radial-gradient(ellipse at center, transparent 30%, var(--ink) 100%);
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    .page-wrap {
+      position: relative;
+      z-index: 1;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 0 24px 80px;
+    }
+
+    /* ── Header ── */
+    header {
+      text-align: center;
+      padding: 60px 0 48px;
+      animation: fadeDown 0.8s ease both;
+    }
+
+    .crown {
+      font-size: 42px;
+      line-height: 1;
+      margin-bottom: 12px;
+      filter: drop-shadow(0 0 18px rgba(201,168,76,0.5));
+      animation: pulse-glow 3s ease-in-out infinite;
+    }
+
+    @keyframes pulse-glow {
+      0%, 100% { filter: drop-shadow(0 0 18px rgba(201,168,76,0.4)); }
+      50%       { filter: drop-shadow(0 0 32px rgba(201,168,76,0.8)); }
+    }
+
+    h1 {
+      font-family: 'Cinzel', serif;
+      font-weight: 900;
+      font-size: clamp(2rem, 6vw, 3.4rem);
+      letter-spacing: 0.08em;
+      background: linear-gradient(135deg, var(--gold-bright) 0%, var(--gold) 50%, var(--gold-dim) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      line-height: 1.1;
+    }
+
+    .tagline {
+      margin-top: 10px;
+      font-size: 1rem;
+      color: var(--ivory-dim);
+      font-style: italic;
+      letter-spacing: 0.04em;
+    }
+
+    .gold-rule {
+      width: 120px;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--gold), transparent);
+      margin: 20px auto 0;
+    }
+
+    /* ── Card ── */
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 32px;
+      margin-bottom: 24px;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+      animation: fadeUp 0.7s ease both;
+    }
+
+    .card + .card { animation-delay: 0.1s; }
+
+    .card-title {
+      font-family: 'Cinzel', serif;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.18em;
+      color: var(--gold);
+      text-transform: uppercase;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .card-title::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: linear-gradient(90deg, var(--border), transparent);
+    }
+
+    /* ── Upload zone ── */
+    .upload-zone {
+      border: 2px dashed var(--gold-dim);
+      border-radius: 4px;
+      padding: 44px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.25s ease;
+      background: rgba(201,168,76,0.03);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .upload-zone:hover, .upload-zone.drag-over {
+      border-color: var(--gold);
+      background: rgba(201,168,76,0.07);
+      box-shadow: inset 0 0 30px rgba(201,168,76,0.05);
+    }
+
+    .upload-zone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+      width: 100%;
+      height: 100%;
+    }
+
+    .upload-icon { font-size: 2.8rem; margin-bottom: 12px; opacity: 0.7; }
+
+    .upload-text {
+      font-family: 'Cinzel', serif;
+      font-size: 0.9rem;
+      color: var(--gold);
+      letter-spacing: 0.06em;
+    }
+
+    .upload-sub {
+      font-size: 0.82rem;
+      color: var(--ivory-dim);
+      margin-top: 6px;
+      font-style: italic;
+    }
+
+    /* ── Preview ── */
+    #preview-wrap {
+      display: none;
+      margin-top: 20px;
+      text-align: center;
+    }
+
+    #preview-img {
+      max-width: 100%;
+      max-height: 320px;
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+    }
+
+    .preview-label {
+      font-size: 0.78rem;
+      color: var(--ivory-dim);
+      margin-top: 8px;
+      font-style: italic;
+    }
+
+    /* ── Controls ── */
+    .controls-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+
+    @media (max-width: 540px) { .controls-grid { grid-template-columns: 1fr; } }
+
+    .field label {
+      display: block;
+      font-family: 'Cinzel', serif;
+      font-size: 0.7rem;
+      letter-spacing: 0.14em;
+      color: var(--gold);
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+
+    /* ── Toggle buttons (whose turn) ── */
+    .toggle-group {
+      display: flex;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .toggle-btn {
+      flex: 1;
+      padding: 11px 16px;
+      background: transparent;
+      border: none;
+      color: var(--ivory-dim);
+      font-family: 'Cinzel', serif;
+      font-size: 0.82rem;
+      letter-spacing: 0.1em;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .toggle-btn:first-child { border-right: 1px solid var(--border); }
+
+    .toggle-btn.active {
+      background: var(--gold);
+      color: var(--ink);
+      font-weight: 600;
+    }
+
+    .toggle-btn:not(.active):hover {
+      background: rgba(201,168,76,0.08);
+      color: var(--ivory);
+    }
+
+    .piece-icon { font-size: 1.3rem; }
+
+    /* ── Depth slider ── */
+    .depth-display {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 10px;
+    }
+
+    .depth-value {
+      font-family: 'Cinzel', serif;
+      font-size: 1.5rem;
+      color: var(--gold-bright);
+      font-weight: 600;
+    }
+
+    .depth-hint {
+      font-size: 0.75rem;
+      color: var(--ivory-dim);
+      font-style: italic;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      -webkit-appearance: none;
+      height: 4px;
+      background: linear-gradient(90deg, var(--gold) 0%, var(--gold) var(--pct, 40%), var(--border) var(--pct, 40%));
+      border-radius: 2px;
+      outline: none;
+      cursor: pointer;
+    }
+
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--gold);
+      border: 2px solid var(--ink);
+      box-shadow: 0 0 8px rgba(201,168,76,0.5);
+      cursor: pointer;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    input[type="range"]::-webkit-slider-thumb:hover {
+      transform: scale(1.2);
+      box-shadow: 0 0 14px rgba(201,168,76,0.8);
+    }
+
+    .depth-labels {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 6px;
+      font-size: 0.7rem;
+      color: var(--ivory-dim);
+    }
+
+    /* ── Submit button ── */
+    .btn-analyze {
+      width: 100%;
+      padding: 16px 32px;
+      background: linear-gradient(135deg, #8a6820, var(--gold), #8a6820);
+      background-size: 200% 100%;
+      background-position: 100% 0;
+      border: none;
+      border-radius: 3px;
+      color: var(--ink);
+      font-family: 'Cinzel', serif;
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: background-position 0.4s ease, transform 0.15s ease, box-shadow 0.3s ease;
+      box-shadow: 0 4px 20px rgba(201,168,76,0.2);
+      margin-top: 8px;
+    }
+
+    .btn-analyze:hover:not(:disabled) {
+      background-position: 0 0;
+      box-shadow: 0 6px 30px rgba(201,168,76,0.45);
+      transform: translateY(-1px);
+    }
+
+    .btn-analyze:active:not(:disabled) { transform: translateY(0); }
+
+    .btn-analyze:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      background-position: 100% 0;
+    }
+
+    /* ── Loading ── */
+    #loading {
+      display: none;
+      text-align: center;
+      padding: 40px 0;
+      animation: fadeUp 0.3s ease;
+    }
+
+    .chess-loader {
+      font-size: 2.8rem;
+      animation: spin-pieces 1.2s steps(1) infinite;
+    }
+
+    @keyframes spin-pieces {
+      0%   { content: '♔'; }
+      14%  { opacity: 0.3; }
+      28%  { opacity: 1; }
+    }
+
+    .pieces-cycle::after {
+      content: '♟';
+      animation: cycle 1.5s steps(1) infinite;
+    }
+
+    @keyframes cycle {
+      0%   { content: '♟'; }
+      16%  { content: '♝'; }
+      33%  { content: '♜'; }
+      50%  { content: '♞'; }
+      66%  { content: '♛'; }
+      83%  { content: '♚'; }
+    }
+
+    .loading-text {
+      font-family: 'Cinzel', serif;
+      font-size: 0.8rem;
+      letter-spacing: 0.18em;
+      color: var(--gold);
+      text-transform: uppercase;
+      margin-top: 14px;
+      animation: blink 1.4s ease infinite;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.4; }
+    }
+
+    /* ── Result ── */
+    #result-section {
+      display: none;
+      animation: fadeUp 0.5s ease both;
+    }
+
+    .result-image-wrap {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+
+    #result-img {
+      max-width: 100%;
+      border: 1px solid var(--gold-dim);
+      border-radius: 2px;
+      box-shadow: 0 8px 40px rgba(201,168,76,0.15), 0 0 0 1px rgba(201,168,76,0.08);
+      transition: transform 0.3s ease;
+    }
+
+    #result-img:hover { transform: scale(1.01); }
+
+    .result-caption {
+      margin-top: 10px;
+      font-size: 0.8rem;
+      color: var(--ivory-dim);
+      font-style: italic;
+    }
+
+    /* ── Download button ── */
+    .btn-download {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 14px;
+      padding: 10px 22px;
+      background: transparent;
+      border: 1px solid var(--gold-dim);
+      border-radius: 3px;
+      color: var(--gold);
+      font-family: 'Cinzel', serif;
+      font-size: 0.75rem;
+      letter-spacing: 0.1em;
+      text-decoration: none;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .btn-download:hover {
+      background: rgba(201,168,76,0.1);
+      border-color: var(--gold);
+      color: var(--gold-bright);
+    }
+
+    /* ── Error ── */
+    #error-box {
+      display: none;
+      background: rgba(192,57,43,0.12);
+      border: 1px solid rgba(192,57,43,0.4);
+      border-radius: 3px;
+      padding: 16px 20px;
+      color: #e74c3c;
+      font-size: 0.9rem;
+      margin-top: 16px;
+      animation: fadeUp 0.3s ease;
+    }
+
+    .error-title {
+      font-family: 'Cinzel', serif;
+      font-size: 0.7rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+      opacity: 0.8;
+    }
+
+    /* ── Footer ── */
+    footer {
+      text-align: center;
+      padding: 32px 0 0;
+      color: var(--ivory-dim);
+      font-size: 0.78rem;
+      font-style: italic;
+      opacity: 0.5;
+      animation: fadeUp 0.8s 0.4s ease both;
+    }
+
+    /* ── Animations ── */
+    @keyframes fadeDown {
+      from { opacity: 0; transform: translateY(-20px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(16px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+  <div class="page-wrap">
+
+    <!-- Header -->
+    <header>
+      <div class="crown">♛</div>
+      <h1>ChessVision</h1>
+      <p class="tagline">Upload a board. Receive the optimal move.</p>
+      <div class="gold-rule"></div>
+    </header>
+
+    <!-- Upload card -->
+    <div class="card" style="animation-delay:0.1s">
+      <div class="card-title">Board Image</div>
+
+      <div class="upload-zone" id="upload-zone">
+        <input type="file" id="file-input" accept="image/png,image/jpeg"/>
+        <div class="upload-icon">♟</div>
+        <div class="upload-text">Drop your chessboard screenshot here</div>
+        <div class="upload-sub">or click to browse — JPG / PNG, max 10 MB</div>
+      </div>
+
+      <div id="preview-wrap">
+        <img id="preview-img" src="" alt="Board preview"/>
+        <div class="preview-label" id="preview-label"></div>
+      </div>
+    </div>
+
+    <!-- Controls card -->
+    <div class="card" style="animation-delay:0.2s">
+      <div class="card-title">Analysis Settings</div>
+
+      <div class="controls-grid">
+
+        <!-- Whose turn -->
+        <div class="field">
+          <label>Whose Turn</label>
+          <div class="toggle-group">
+            <button class="toggle-btn active" id="btn-white" onclick="setTurn('w')">
+              <span class="piece-icon">♔</span> White
+            </button>
+            <button class="toggle-btn" id="btn-black" onclick="setTurn('b')">
+              <span class="piece-icon">♚</span> Black
+            </button>
+          </div>
+        </div>
+
+        <!-- Depth -->
+        <div class="field">
+          <label>Search Depth</label>
+          <div class="depth-display">
+            <span class="depth-value" id="depth-val">5</span>
+            <span class="depth-hint" id="depth-hint">Balanced</span>
+          </div>
+          <input type="range" id="depth-slider" min="1" max="20" value="5"
+                 oninput="updateDepth(this.value)"/>
+          <div class="depth-labels"><span>1 — Fast</span><span>20 — Deep</span></div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Submit -->
+    <button class="btn-analyze" id="btn-submit" onclick="analyze()" disabled>
+      ♟ &nbsp; Analyse Position
+    </button>
+
+    <!-- Loading -->
+    <div id="loading">
+      <div class="chess-loader pieces-cycle"></div>
+      <div class="loading-text" id="loading-text">Scanning board…</div>
+    </div>
+
+    <!-- Error -->
+    <div id="error-box">
+      <div class="error-title">⚠ Analysis Failed</div>
+      <div id="error-msg"></div>
+    </div>
+
+    <!-- Result -->
+    <div id="result-section">
+      <div class="card" style="animation-delay:0s; margin-top:24px;">
+        <div class="card-title">Best Move</div>
+        <div class="result-image-wrap">
+          <img id="result-img" src="" alt="Annotated board"/>
+          <div class="result-caption">Green arrow indicates Stockfish's recommended move</div>
+          <br/>
+          <a class="btn-download" id="download-btn" href="#" download="best_move.png">
+            ↓ &nbsp; Download Annotated Board
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <footer>ChessVision &mdash; Powered by TensorFlow &amp; Stockfish</footer>
+
+  </div>
+
+  <script>
+    let selectedFile = null;
+    let whosTurn = 'w';
+
+    /* ── File input ── */
+    const fileInput = document.getElementById('file-input');
+    const uploadZone = document.getElementById('upload-zone');
+
+    fileInput.addEventListener('change', e => {
+      if (e.target.files[0]) loadFile(e.target.files[0]);
+    });
+
+    uploadZone.addEventListener('dragover', e => {
+      e.preventDefault();
+      uploadZone.classList.add('drag-over');
+    });
+
+    uploadZone.addEventListener('dragleave', () => {
+      uploadZone.classList.remove('drag-over');
+    });
+
+    uploadZone.addEventListener('drop', e => {
+      e.preventDefault();
+      uploadZone.classList.remove('drag-over');
+      const file = e.dataTransfer.files[0];
+      if (file) loadFile(file);
+    });
+
+    function loadFile(file) {
+      if (!file.type.match('image/(jpeg|png)')) {
+        showError('Only JPG and PNG files are accepted.');
+        return;
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        showError('File is too large. Maximum size is 10 MB.');
+        return;
+      }
+      selectedFile = file;
+      const reader = new FileReader();
+      reader.onload = e => {
+        document.getElementById('preview-img').src = e.target.result;
+        document.getElementById('preview-label').textContent = `${file.name} — ${(file.size/1024).toFixed(1)} KB`;
+        document.getElementById('preview-wrap').style.display = 'block';
+      };
+      reader.readAsDataURL(file);
+      document.getElementById('btn-submit').disabled = false;
+      hideError();
+      document.getElementById('result-section').style.display = 'none';
+    }
+
+    /* ── Turn toggle ── */
+    function setTurn(turn) {
+      whosTurn = turn;
+      document.getElementById('btn-white').classList.toggle('active', turn === 'w');
+      document.getElementById('btn-black').classList.toggle('active', turn === 'b');
+    }
+
+    /* ── Depth slider ── */
+    function updateDepth(val) {
+      val = parseInt(val);
+      document.getElementById('depth-val').textContent = val;
+      const hints = {
+        1:'Lightning', 2:'Very fast', 3:'Fast', 4:'Quick', 5:'Balanced',
+        6:'Good', 7:'Strong', 8:'Very strong', 9:'Expert', 10:'Master',
+        11:'Deep', 12:'Very deep', 13:'Grandmaster', 14:'Elite', 15:'Near perfect',
+        16:'Engine', 17:'Pro engine', 18:'Maximum', 19:'Extreme', 20:'Deepest'
+      };
+      document.getElementById('depth-hint').textContent = hints[val] || '';
+
+      // update slider gradient fill
+      const slider = document.getElementById('depth-slider');
+      const pct = ((val - 1) / 19 * 100).toFixed(1) + '%';
+      slider.style.setProperty('--pct', pct);
+      slider.style.background = `linear-gradient(90deg, var(--gold) 0%, var(--gold) ${pct}, var(--border) ${pct})`;
+    }
+
+    updateDepth(5); // init
+
+    /* ── Analyse ── */
+    async function analyze() {
+      if (!selectedFile) return;
+
+      const depth = document.getElementById('depth-slider').value;
+
+      // show loading
+      document.getElementById('btn-submit').disabled = true;
+      document.getElementById('loading').style.display = 'block';
+      document.getElementById('result-section').style.display = 'none';
+      hideError();
+
+      const loadingMessages = [
+        'Scanning board…',
+        'Classifying pieces…',
+        'Generating FEN…',
+        'Consulting Stockfish…',
+        'Drawing best move…'
+      ];
+      let msgIdx = 0;
+      const msgInterval = setInterval(() => {
+        document.getElementById('loading-text').textContent = loadingMessages[Math.min(msgIdx++, loadingMessages.length - 1)];
+      }, 1800);
+
+      try {
+        const formData = new FormData();
+        formData.append('file', selectedFile);
+
+        const res = await fetch(
+          `/predict/image?whos_turn=${whosTurn}&depth=${depth}`,
+          { method: 'POST', body: formData }
+        );
+
+        clearInterval(msgInterval);
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
+          throw new Error(err.detail || `Server error ${res.status}`);
+        }
+
+        const blob = await res.blob();
+        const url  = URL.createObjectURL(blob);
+
+        document.getElementById('result-img').src = url;
+        document.getElementById('download-btn').href = url;
+
+        // extract metadata from response headers
+        const bestMove   = res.headers.get('X-Best-Move')   || '—';
+        const humanMove  = res.headers.get('X-Human-Move')  || '—';
+        const evaluation = res.headers.get('X-Evaluation')  || '—';
+
+        document.querySelector('#result-section .card-title').textContent =
+          `Best Move — ${humanMove}`;
+
+        document.getElementById('result-section').style.display = 'block';
+
+      } catch (err) {
+        clearInterval(msgInterval);
+        showError(err.message);
+      } finally {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('btn-submit').disabled = false;
+      }
+    }
+
+    /* ── Helpers ── */
+    function showError(msg) {
+      const box = document.getElementById('error-box');
+      document.getElementById('error-msg').textContent = msg;
+      box.style.display = 'block';
+    }
+
+    function hideError() {
+      document.getElementById('error-box').style.display = 'none';
+    }
+  </script>
+</body>
+</html>
