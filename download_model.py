@@ -6,7 +6,7 @@ import os
 import sys
 import requests
 
-MODEL_PATH = os.getenv("MODEL_PATH", "my_chess_model.v2.keras")
+MODEL_PATH = os.getenv("MODEL_PATH", "chess_model.tflite")
 FILE_ID    = os.getenv("GDRIVE_FILE_ID", "")
 
 

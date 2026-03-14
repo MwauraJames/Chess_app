@@ -5,3 +5,4 @@ outputs/
 uploads/
 *.keras
 *.h5
+*.tflite

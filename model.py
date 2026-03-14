@@ -2,7 +2,6 @@ import numpy as np
 import cv2
 import tensorflow as tf
 import io
-from PIL import Image
 
 
 CLASS_NAMES = [
@@ -21,18 +20,28 @@ LABEL_TO_FEN = {
 
 
 def load_model(model_path: str):
-    """Load the Keras chess model from disk."""
-    return tf.keras.models.load_model(model_path)
+    """
+    Load a TFLite model and return its interpreter.
+    TFLite uses an 'interpreter' instead of a Keras model object —
+    it is much lighter on RAM than the full Keras model.
+    """
+    print(f"[model] Loading TFLite model from '{model_path}'...")
+    interpreter = tf.lite.Interpreter(model_path=model_path)
+
+    # allocate_tensors() tells TFLite to reserve memory for inputs/outputs
+    interpreter.allocate_tensors()
+
+    print("[model] TFLite model ready.")
+    return interpreter
 
 
 def preprocess_image(image_bytes: bytes) -> np.ndarray:
     """
-    Convert raw image bytes into an OpenCV-compatible numpy array (BGR).
-    Replaces cv2.imread() since we receive bytes from the API instead of a file path.
+    Convert raw image bytes → OpenCV BGR image.
+    Replaces cv2.imread() since we receive bytes from the API.
     """
-    # decode bytes → numpy array → OpenCV image (BGR)
     nparr = np.frombuffer(image_bytes, np.uint8)
-    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    img   = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
     if img is None:
         raise ValueError("Could not decode image. Make sure it is a valid JPG or PNG.")
@@ -42,9 +51,8 @@ def preprocess_image(image_bytes: bytes) -> np.ndarray:
 
 def extract_squares(img: np.ndarray) -> np.ndarray:
     """
-    Slice the chessboard into 64 squares, resize each to 128×128,
-    and convert BGR → RGB to match training-time preprocessing.
-    Returns a batch of shape (64, 128, 128, 3).
+    Slice the chessboard into 64 squares, resize to 128×128, convert BGR→RGB.
+    Returns batch of shape (64, 128, 128, 3).
     """
     h, w, _ = img.shape
     sq_h, sq_w = h // 8, w // 8
@@ -54,35 +62,59 @@ def extract_squares(img: np.ndarray) -> np.ndarray:
         for c in range(8):
             square = img[r * sq_h:(r + 1) * sq_h, c * sq_w:(c + 1) * sq_w]
             square = cv2.resize(square, (128, 128))
-            square = cv2.cvtColor(square, cv2.COLOR_BGR2RGB)   # BGR → RGB
+            square = cv2.cvtColor(square, cv2.COLOR_BGR2RGB)
             squares.append(square)
 
-    return np.array(squares)   # shape: (64, 128, 128, 3)
+    return np.array(squares, dtype=np.float32)   # TFLite requires float32
 
 
-def predict_board(model, image_bytes: bytes) -> list:
+def predict_board(interpreter, image_bytes: bytes) -> list:
     """
-    Full pipeline: bytes → squares → model prediction → 8×8 label grid.
-    Returns a list of lists, e.g. [['blackrook', 'blackknight', ...], ...].
-    """
-    img = preprocess_image(image_bytes)
-    batch = extract_squares(img)
+    Full pipeline: bytes → squares → TFLite prediction → 8×8 label grid.
 
-    predictions = model.predict(batch, verbose=0)
-    predicted_indices = np.argmax(predictions, axis=1)
-    predicted_labels = [CLASS_NAMES[i] for i in predicted_indices]
+    TFLite works differently from Keras:
+    - You set the input tensor manually
+    - You call invoke() to run the model
+    - You read the output tensor manually
+    Instead of model.predict(batch), we feed one square at a time.
+    """
+    img    = preprocess_image(image_bytes)
+    batch  = extract_squares(img)   # shape: (64, 128, 128, 3)
+
+    # Get input and output tensor details from the interpreter
+    input_details  = interpreter.get_input_details()
+    output_details = interpreter.get_output_details()
+
+    predicted_labels = []
+
+    for i in range(64):
+        # Add batch dimension: (128, 128, 3) → (1, 128, 128, 3)
+        square = np.expand_dims(batch[i], axis=0)
+
+        # Feed the square into the model
+        interpreter.set_tensor(input_details[0]['index'], square)
+
+        # Run inference
+        interpreter.invoke()
+
+        # Read the output probabilities
+        output = interpreter.get_tensor(output_details[0]['index'])  # shape: (1, 13)
+
+        # Pick class with highest probability
+        predicted_index = np.argmax(output[0])
+        predicted_labels.append(CLASS_NAMES[predicted_index])
 
     return np.array(predicted_labels).reshape(8, 8).tolist()
 
 
 def board_to_fen(predictions_grid: list, whos_turn: str = "w") -> str:
-    """Convert the 8×8 label grid into a valid FEN string."""
+    """Convert 8×8 label grid → FEN string."""
     fen_rows = []
 
     for row in predictions_grid:
         raw_row = "".join([LABEL_TO_FEN.get(piece, '?') for piece in row])
 
-        # compress consecutive empty squares (e.g. '111' → '3')
+        # compress consecutive empty squares e.g. '111' → '3'
         for i in range(8, 1, -1):
             raw_row = raw_row.replace('1' * i, str(i))
 
@@ -94,8 +126,8 @@ def board_to_fen(predictions_grid: list, whos_turn: str = "w") -> str:
 
 def draw_best_move(image_bytes: bytes, best_move: str) -> bytes:
     """
-    Draw a green arrow on the original chessboard image showing the best move.
-    Returns the annotated image as PNG bytes.
+    Draw a green arrow on the chessboard showing the best move.
+    Returns annotated image as PNG bytes.
     """
     img = preprocess_image(image_bytes)
     h, w, _ = img.shape
@@ -105,20 +137,18 @@ def draw_best_move(image_bytes: bytes, best_move: str) -> bytes:
     ranks = {'8': 0, '7': 1, '6': 2, '5': 3, '4': 4, '3': 5, '2': 6, '1': 7}
 
     start_sq = best_move[:2]
-    end_sq = best_move[2:4]
+    end_sq   = best_move[2:4]
 
     col_start = files[start_sq[0]]
     row_start = ranks[start_sq[1]]
-    col_end = files[end_sq[0]]
-    row_end = ranks[end_sq[1]]
+    col_end   = files[end_sq[0]]
+    row_end   = ranks[end_sq[1]]
 
     start_center = (col_start * sq_w + sq_w // 2, row_start * sq_h + sq_h // 2)
-    end_center = (col_end * sq_w + sq_w // 2, row_end * sq_h + sq_h // 2)
+    end_center   = (col_end   * sq_w + sq_w // 2, row_end   * sq_h + sq_h // 2)
 
-    # draw the arrow (green, thick)
     cv2.arrowedLine(img, start_center, end_center, (0, 255, 0), 6, tipLength=0.2)
 
-    # encode annotated image back to PNG bytes
     success, buffer = cv2.imencode(".png", img)
     if not success:
         raise RuntimeError("Failed to encode result image.")
